@@ -246,7 +246,16 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  // Controlliamo se l'interrupt è stato generato proprio dal pin del pulsante (PA0)
+  if (GPIO_Pin == GPIO_PIN_0)
+  {
+    // Inverti lo stato del LED su PE9 (se è acceso si spegne, se è spento si accende)
+    HAL_GPIO_TogglePin(GPIOE, GPIO_PIN_9);
+    // NOTA: PE9 fa parte del blocco GPIOE (con la E finale)
+  }
+}
 /* USER CODE END 4 */
 
 /**
