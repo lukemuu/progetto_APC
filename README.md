@@ -1,4 +1,4 @@
-# Analisi e Mitigazione di Replay Attack tramite Rolling Code
+# Analisi e Mitigazione di Replay Attack tramite Rolling Code nei sistemi Keyless
 
 ## 🔐 Descrizione del Progetto
 Questo progetto mira a dimostrare le vulnerabilità dei sistemi di accesso wireless (come telecomandi per auto o cancelli) ai cosiddetti **Replay Attack** e come implementare una contromisura efficace basata sull'algoritmo **Rolling Code**.
@@ -22,11 +22,12 @@ Il sistema è suddiviso in tre nodi logici:
 * **Microcontrollori:** 2x STM32F303 Discovery Board.
 * **Comunicazione Wireless:** 3x Transceiver HC-12 (433MHz).
 * **Interfaccia PC:** 1x Adattatore USB-UART (CH340).
-* **Attuatori:** * 1x Modulo Relè (5V).
+* **Attuatori:**
+    * 1x Modulo Relè (5V).
     * 1x Mini Serratura Elettromagnetica (12V).
     * 1x Buzzer Attivo.
 * **Alimentazione:** Portapile per 8 batterie AA (12V) per il circuito di potenza della serratura.
-* **Varie:** Breadboard, cavi Jumper (Dupont), Diodo 1N4007 per protezione da picchi induttivi.
+* **Varie:** Breadboard, cavi Jumper, Diodo 1N4007 per protezione da picchi induttivi.
 
 ---
 
@@ -42,16 +43,3 @@ Il sistema è suddiviso in tre nodi logici:
 * `/Nodo2_Serratura`: Progetto STM32CubeIDE per il ricevitore e la gestione hardware della serratura.
 * `/Nodo3_Hacker`: Script Python per la dashboard di sniffing e attacco.
 * `/Docs`: Eventuali schemi elettrici e documentazione aggiuntiva.
-
----
-
-## 🚀 Come avviare il progetto
-
-### 1. Configurazione Firmware
-Importare i progetti `Nodo1` e `Nodo2` in STM32CubeIDE, compilarli e caricarli sulle rispettive schede Discovery.
-
-### 2. Configurazione Dashboard Python
-Assicurarsi di avere Python installato, collegare l'adattatore USB-UART e lanciare:
-```bash
-pip install pyserial customtkinter
-python main_hacker.py
