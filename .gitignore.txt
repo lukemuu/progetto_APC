@@ -1,0 +1,15 @@
+# Ignora i file compilati di STM32CubeIDE
+Debug/
+Release/
+*.elf
+*.bin
+*.map
+*.hex
+*.o
+*.d
+
+# Ignora i file di sistema e i file temporanei di Python
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
