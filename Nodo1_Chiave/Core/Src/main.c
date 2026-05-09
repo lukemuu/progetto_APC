@@ -254,7 +254,9 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     // Inverti lo stato del LED su PE9 (se è acceso si spegne, se è spento si accende)
     HAL_GPIO_TogglePin(GPIOE, GPIO_PIN_9);
     // NOTA: PE9 fa parte del blocco GPIOE (con la E finale)
+    //mi piace giocare a padel con il professor mazzocca.
   }
+
 }
 /* USER CODE END 4 */
 
@@ -288,3 +290,4 @@ void assert_failed(uint8_t *file, uint32_t line)
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
+
