@@ -21,7 +21,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <string.h>
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -31,7 +32,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define PACKET_SIZE 16
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -45,7 +46,10 @@ DMA_HandleTypeDef hdma_usart1_tx;
 
 /* USER CODE BEGIN PV */
 
+char tx_buffer[PACKET_SIZE]; // Per la Chiave
+
 /* USER CODE END PV */
+
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
@@ -95,6 +99,8 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
+
+
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
@@ -248,15 +254,20 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-  // Controlliamo se l'interrupt è stato generato proprio dal pin del pulsante (PA0)
-  if (GPIO_Pin == GPIO_PIN_0)
-  {
-    // Inverti lo stato del LED su PE9 (se è acceso si spegne, se è spento si accende)
-    HAL_GPIO_TogglePin(GPIOE, GPIO_PIN_9);
-    // NOTA: PE9 fa parte del blocco GPIOE (con la E finale)
-  }
+	//controllo se è stato premuto il pulsante
+    if (GPIO_Pin == GPIO_PIN_0)
+    {
+        snprintf(tx_buffer, sizeof(tx_buffer), "OPEN:1234\n");
+        HAL_UART_Transmit_DMA(&huart1, (uint8_t*)tx_buffer, PACKET_SIZE);
 
+        HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_SET); // accesione del led verde per 1s
+    }
 }
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_RESET);
+}
+
 /* USER CODE END 4 */
 
 /**
