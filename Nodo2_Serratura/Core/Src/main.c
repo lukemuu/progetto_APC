@@ -41,6 +41,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+TIM_HandleTypeDef htim2;
+
 UART_HandleTypeDef huart1;
 DMA_HandleTypeDef hdma_usart1_rx;
 
@@ -48,6 +50,7 @@ DMA_HandleTypeDef hdma_usart1_rx;
 
 uint8_t rx_buffer[PACKET_SIZE]; // Per la Serratura
 
+volatile uint8_t access_event = 0; // 0=nessuno, 1=corretto, 2=errato
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -55,6 +58,7 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -95,6 +99,7 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_USART1_UART_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
 
   HAL_UART_Receive_DMA(&huart1, rx_buffer, PACKET_SIZE);
@@ -105,7 +110,32 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* USER CODE END WHILE */
+	  if (access_event == 1)
+	  {
+		  access_event = 0;
+
+		  // LED Verde ON per 1 secondo
+		  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_SET);
+		  HAL_Delay(1000);
+		  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET);
+	  }
+	  else if (access_event == 2)
+	  {
+		  access_event = 0;
+
+		  // 5 lampeggi LED Rosso + Buzzer sincronizzati
+		  for (int i = 0; i < 5; i++)
+		  {
+			  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_SET);
+			  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
+			  HAL_Delay(500);
+
+			  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_RESET);
+			  HAL_TIM_PWM_Stop(&htim2, TIM_CHANNEL_1);
+			  HAL_Delay(500);
+		  }
+	  }
+	  /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
   }
@@ -155,6 +185,65 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 23;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 999;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 499;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+  HAL_TIM_MspPostInit(&htim2);
+
 }
 
 /**
@@ -221,6 +310,7 @@ static void MX_GPIO_Init(void)
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOE_CLK_ENABLE();
 
@@ -242,28 +332,19 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-	//controllo se il pacchetto proviene dalla USART1
     if (huart->Instance == USART1)
     {
-    	if (strstr((char*)rx_buffer, "OPEN:1234") != NULL)
+        if (strstr((char*)rx_buffer, "OPEN:1234") != NULL)
         {
-            HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_SET); // accensione Led Verde
-            HAL_Delay(1000);
-            HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET); // spegnimento Led Verde
+            access_event = 1; // chiave corretta
         }
         else
         {
-        	for (int i = 0; i < 5; i++)
-        	{
-        	   HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_SET);   // accensione Led Rosso
-        	   HAL_Delay(1000);
-        	   HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_RESET); // spegnimento Led Rosso
-        	   HAL_Delay(1000);
-        	}
+            access_event = 2; // chiave errata
         }
 
-        memset(rx_buffer, 0, PACKET_SIZE); 	 // mette tutti 0 all'interno del buffer
-        HAL_UART_Receive_DMA(huart, rx_buffer, PACKET_SIZE); // prepara il DMA ad una nuova iterazione
+        memset(rx_buffer, 0, PACKET_SIZE);
+        HAL_UART_Receive_DMA(huart, rx_buffer, PACKET_SIZE);
     }
 }
 /* USER CODE END 4 */
