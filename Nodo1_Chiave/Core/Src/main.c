@@ -257,7 +257,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 	//controllo se è stato premuto il pulsante
     if (GPIO_Pin == GPIO_PIN_0)
     {
-        snprintf(tx_buffer, sizeof(tx_buffer), "OPEN:1234\n");
+        snprintf(tx_buffer, sizeof(tx_buffer), "OPEN:1235\n");
         HAL_UART_Transmit_DMA(&huart1, (uint8_t*)tx_buffer, PACKET_SIZE);
 
         HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_SET); // accesione del led verde per 1s

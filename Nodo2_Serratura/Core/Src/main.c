@@ -95,7 +95,6 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_USART1_UART_Init();
-
   /* USER CODE BEGIN 2 */
 
   HAL_UART_Receive_DMA(&huart1, rx_buffer, PACKET_SIZE);
@@ -204,7 +203,7 @@ static void MX_DMA_Init(void)
 
   /* DMA interrupt init */
   /* DMA1_Channel5_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel5_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA1_Channel5_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel5_IRQn);
 
 }
@@ -246,19 +245,19 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 	//controllo se il pacchetto proviene dalla USART1
     if (huart->Instance == USART1)
     {
-        if (strncmp((char*)rx_buffer, "OPEN:1234", 9) == 0)
+    	if (strstr((char*)rx_buffer, "OPEN:1234") != NULL)
         {
-            HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_SET); // accensione Led Verde
+            HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_SET); // accensione Led Verde
             HAL_Delay(1000);
-            HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_RESET); // spegnimento Led Verde
+            HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET); // spegnimento Led Verde
         }
         else
         {
         	for (int i = 0; i < 5; i++)
         	{
-        	   HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_SET);   // accensione Led Rosso
+        	   HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_SET);   // accensione Led Rosso
         	   HAL_Delay(1000);
-        	   HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET); // spegnimento Led Rosso
+        	   HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_RESET); // spegnimento Led Rosso
         	   HAL_Delay(1000);
         	}
         }
