@@ -7,7 +7,7 @@ Il sistema simula una serratura intelligente controllata via radio, composta da 
 
 ---
 
-## 🏗️ Architettura del Sistema
+## 🏗️ Architettura del Sistema 
 Il sistema è suddiviso in tre nodi logici:
 
 1.  **Nodo 1 - La Chiave (STM32F303):** Genera e invia pacchetti radio cifrati. Ogni invio incrementa un contatore interno, rendendo ogni codice univoco e utilizzabile una sola volta.
