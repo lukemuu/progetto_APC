@@ -1,17 +1,65 @@
-# Ignora i file compilati di STM32CubeIDE
-Debug/
-Release/
+# ==========================================
+# STM32CubeIDE / Eclipse - Build Artifacts
+# ==========================================
+# Escludiamo le cartelle dove l'IDE compila i file. 
+# Sono pesanti e cambiano a ogni "Build".
+**/Debug/
+**/Release/
+**/bin/
+**/obj/
+
+ 
+
+# Estensioni specifiche dei file generati
 *.elf
+*.hex
 *.bin
 *.map
-*.hex
+*.lst
 *.o
 *.d
+*.su
 
-# Ignora i file di sistema e i file temporanei di Python
+ 
+
+# ==========================================
+# IDE Settings (Il motivo dei tuoi conflitti!)
+# ==========================================
+# Escludiamo le impostazioni locali che variano da PC a PC
+**/.settings/
+**/.metadata/
+**/.analytics
+**/.history/
+**/.loadOrder
+
+ 
+
+# NOTA: I file .project, .cproject e .mxproject NON sono in lista
+# perché servono per importare il progetto su altri computer.
+
+ 
+
+# ==========================================
+# Python (Nodo 3 - Hacker Dashboard)
+# ==========================================
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 .venv/
-.DS_Store
+venv/
+ENV/
+.env
 
-.metadata/
+ 
+
+# ==========================================
+# Sistema Operativo (macOS / Windows)
+# ==========================================
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
