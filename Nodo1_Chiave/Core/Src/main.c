@@ -32,7 +32,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define PACKET_SIZE 16
+#define PACKET_SIZE 32
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -47,6 +47,7 @@ DMA_HandleTypeDef hdma_usart1_tx;
 /* USER CODE BEGIN PV */
 
 char tx_buffer[PACKET_SIZE]; // Per la Chiave
+uint32_t key_counter = 0; // Il nostro contatore di sicurezza
 
 /* USER CODE END PV */
 
@@ -254,15 +255,20 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-	//controllo se è stato premuto il pulsante
-    if (GPIO_Pin == GPIO_PIN_0)
+    if (GPIO_Pin == GPIO_PIN_0) // Pulsante della Chiave
     {
-        snprintf(tx_buffer, sizeof(tx_buffer), "OPEN:1234\n");
+        key_counter++; // Incrementa ad ogni pressione
+
+        // Prepariamo il pacchetto includendo il contatore (formattato a 4 cifre per comodità)
+        snprintf(tx_buffer, sizeof(tx_buffer), "OPEN:1234:CNT:%04lu\n", key_counter);
+
         HAL_UART_Transmit_DMA(&huart1, (uint8_t*)tx_buffer, PACKET_SIZE);
 
-        HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_SET); // accesione del led rosso per 1s
+        // Feedback visivo rapido sulla chiave
+        HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_SET);
     }
 }
+
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
 	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_RESET);

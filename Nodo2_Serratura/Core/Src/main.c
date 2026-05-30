@@ -23,6 +23,7 @@
 /* USER CODE BEGIN Includes */
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -32,7 +33,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define PACKET_SIZE 16
+#define PACKET_SIZE 32
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -49,6 +50,8 @@ DMA_HandleTypeDef hdma_usart1_rx;
 /* USER CODE BEGIN PV */
 
 uint8_t rx_buffer[PACKET_SIZE]; // Per la Serratura
+uint8_t secure_mode = 0;       // 0 = Scenario 1 (Inseguro), 1 = Scenario 2 (Sicuro)
+uint32_t last_valid_counter = 0; // Memoria dell'ultimo contatore accettato
 
 volatile uint8_t access_event = 0; // 0=nessuno, 1=corretto, 2=errato
 /* USER CODE END PV */
@@ -110,32 +113,37 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  if (access_event == 1)
-	  {
-		  access_event = 0;
+      /* USER CODE BEGIN WHILE */
 
-		  // LED Verde ON per 1 secondo
-		  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_SET);
-		  HAL_Delay(1000);
-		  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET);
-	  }
-	  else if (access_event == 2)
-	  {
-		  access_event = 0;
+      // --- CASO 1: APERTURA AUTORIZZATA ---
+      if (access_event == 1)
+      {
+          access_event = 0; // Resetta immediatamente il flag per non ciclare
 
-		  // 5 lampeggi LED Rosso + Buzzer sincronizzati
-		  for (int i = 0; i < 5; i++)
-		  {
-			  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_SET);
-			  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
-			  HAL_Delay(500);
+          // LED Verde ON per 1 secondo (Sblocco Solenoide/Relè)
+          HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_SET);
+          HAL_Delay(1000);
+          HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET);
+      }
 
-			  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_RESET);
-			  HAL_TIM_PWM_Stop(&htim2, TIM_CHANNEL_1);
-			  HAL_Delay(500);
-		  }
-	  }
-	  /* USER CODE END WHILE */
+      // --- CASO 2: ACCESSO NEGATO / ATTACCO IN CORSO ---
+      else if (access_event == 2)
+      {
+          access_event = 0; // Resetta immediatamente il flag
+
+          // 5 lampeggi LED Rosso + Buzzer passivo sul Canale 2 (PA1)
+          for (int i = 0; i < 5; i++)
+          {
+              HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_SET);
+              HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2); // <--- Canale 2 aggiornato!
+              HAL_Delay(200); // 200ms acceso per un effetto allarme più dinamico
+
+              HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_RESET);
+              HAL_TIM_PWM_Stop(&htim2, TIM_CHANNEL_2);  // <--- Canale 2 aggiornato!
+              HAL_Delay(200); // 200ms spento
+          }
+      }
+    /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
   }
@@ -235,7 +243,7 @@ static void MX_TIM2_Init(void)
   sConfigOC.Pulse = 499;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
   }
@@ -315,14 +323,24 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOE_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOE, Red_Led_Pin|Green_Led_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOE, Blue_Led_Pin|Red_Led_Pin|Green_Led_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : Red_Led_Pin Green_Led_Pin */
-  GPIO_InitStruct.Pin = Red_Led_Pin|Green_Led_Pin;
+  /*Configure GPIO pin : switch_mode_Pin */
+  GPIO_InitStruct.Pin = switch_mode_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(switch_mode_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : Blue_Led_Pin Red_Led_Pin Green_Led_Pin */
+  GPIO_InitStruct.Pin = Blue_Led_Pin|Red_Led_Pin|Green_Led_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI0_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
@@ -330,19 +348,64 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+    if (GPIO_Pin == GPIO_PIN_0)
+    {
+        uint32_t now = HAL_GetTick();
+        static uint32_t last_press = 0;
+
+        if ((now - last_press) < 200) return;
+        last_press = now;
+
+        secure_mode = !secure_mode;
+        HAL_GPIO_TogglePin(GPIOE, GPIO_PIN_8);
+    }
+}
+
+
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (huart->Instance == USART1)
     {
+        // 1. Il comando base è corretto?
         if (strstr((char*)rx_buffer, "OPEN:1234") != NULL)
         {
-            access_event = 1; // chiave corretta
+            // --- SCENARIO 1: SISTEMA IN CHIARO / VULNERABILE ---
+            if (secure_mode == 0)
+            {
+                access_event = 1; // Apri sempre, ignora il contatore!
+            }
+            // --- SCENARIO 2: SISTEMA SICURO CON ROLLING CODE ---
+            else
+            {
+                uint32_t received_counter = 0;
+                char *cnt_ptr = strstr((char*)rx_buffer, ":CNT:");
+
+                if (cnt_ptr != NULL)
+                {
+                    received_counter = strtoul(cnt_ptr + 5, NULL, 10);
+                }
+
+                // Verifica del contatore rolling code
+                if (received_counter > last_valid_counter)
+                {
+                    last_valid_counter = received_counter; // Aggiorna la memoria
+                    access_event = 1;                      // Accesso Consentito!
+                }
+                else
+                {
+                    access_event = 2; // REPLAY ATTACK RILEVATO! (Contatore vecchio o doppio)
+                }
+            }
         }
         else
         {
-            access_event = 2; // chiave errata
+            // Il pacchetto non contiene nemmeno la password base
+            access_event = 2;
         }
 
+        // Pulisci e riarma il DMA immediatamente
         memset(rx_buffer, 0, PACKET_SIZE);
         HAL_UART_Receive_DMA(huart, rx_buffer, PACKET_SIZE);
     }

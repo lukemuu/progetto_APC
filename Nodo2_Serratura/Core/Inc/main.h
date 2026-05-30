@@ -59,6 +59,13 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define switch_mode_Pin GPIO_PIN_0
+#define switch_mode_GPIO_Port GPIOA
+#define switch_mode_EXTI_IRQn EXTI0_IRQn
+#define buzzer_Pin GPIO_PIN_1
+#define buzzer_GPIO_Port GPIOA
+#define Blue_Led_Pin GPIO_PIN_8
+#define Blue_Led_GPIO_Port GPIOE
 #define Red_Led_Pin GPIO_PIN_9
 #define Red_Led_GPIO_Port GPIOE
 #define Green_Led_Pin GPIO_PIN_15

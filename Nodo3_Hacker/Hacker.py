@@ -16,7 +16,7 @@ import logging
 from datetime import datetime
 
 # ─── COSTANTI ─────────────────────────────────────────────────────────────────
-PACKET_SIZE = 16
+PACKET_SIZE = 32
 READ_TIMEOUT = 2.0
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
