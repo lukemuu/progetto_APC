@@ -84,7 +84,7 @@ uint32_t key_counter = 0; // Il nostro contatore di sicurezza
  *   1 = Scenario 2 (Fase 2, pacchetto cifrato con AES-128-ECB)
  * Deve essere tenuto sincronizzato manualmente con il Nodo 2.
  */
-uint8_t secure_mode = 1;
+uint8_t secure_mode = 0;
 
 /* Buffer di lavoro per la cifratura AES (Fase 2) */
 static uint8_t plaintext[AES_BLOCK_SIZE];
@@ -307,7 +307,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOE_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(User_led_GPIO_Port, User_led_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOE, Blue_Led_Pin|Red_Led_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : User_button_Pin */
   GPIO_InitStruct.Pin = User_button_Pin;
@@ -315,16 +315,25 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(User_button_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : User_led_Pin */
-  GPIO_InitStruct.Pin = User_led_Pin;
+  /*Configure GPIO pin : send_button_Pin */
+  GPIO_InitStruct.Pin = send_button_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(send_button_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : Blue_Led_Pin Red_Led_Pin */
+  GPIO_InitStruct.Pin = Blue_Led_Pin|Red_Led_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(User_led_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
   HAL_NVIC_SetPriority(EXTI0_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI0_IRQn);
+
+  HAL_NVIC_SetPriority(EXTI1_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI1_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
@@ -332,93 +341,114 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-    if (GPIO_Pin == GPIO_PIN_0) // Pulsante della Chiave
+    /* ─────────────────────────────────────────────────────────────────────────
+
+     * 1. PULSANTE ONBOARD (GPIO_PIN_0) -> SWITCH MODALITÀ (Safe / Secure)
+
+     * ───────────────────────────────────────────────────────────────────────── */
+    if (GPIO_Pin == GPIO_PIN_0)
     {
         uint32_t now = HAL_GetTick();
-        static uint32_t last_press = 0;
+        static uint32_t last_press_mode = 0;
+        // Anti-rimbalzo (Debounce) dedicato alla modalità
+        if ((now - last_press_mode) < 200) return;
+        last_press_mode = now;
+        secure_mode = !secure_mode;
+        /*
 
-        if ((now - last_press) < 200) return;
-        last_press = now;
+         * Al cambio di modalità azzera il contatore di trasmissione.
 
-        key_counter++; // Incrementa ad ogni pressione
+         * Questo permette a Nodo 1 e Nodo 2 di ripartire da zero insieme
 
+         * e rimanere perfettamente sincronizzati.
+
+         */
+
+        key_counter = 0;
+
+        // Feedback visivo: invertiamo il LED arancione/blu (es. PE8) per indicare il cambio
+
+        HAL_GPIO_TogglePin(GPIOE, GPIO_PIN_8);
+    }
+    /* ─────────────────────────────────────────────────────────────────────────
+
+     * 2. NUOVO PULSANTE ESTERNO (Es. GPIO_PIN_1) -> TRASMISSIONE COMANDO
+
+     * ─────────────────────────────────────────────────────────────────────────
+
+     * NOTA: Sostituisci "GPIO_PIN_1" con il pin esatto che hai scelto su CubeMX
+
+     * (ad esempio GPIO_PIN_3, GPIO_PIN_4, ecc.)
+
+     * ───────────────────────────────────────────────────────────────────────── */
+    else if (GPIO_Pin == GPIO_PIN_1)
+    {
+        uint32_t now = HAL_GetTick();
+        static uint32_t last_press_send = 0;
+        // Anti-rimbalzo (Debounce) dedicato all'invio
+        if ((now - last_press_send) < 200) return;
+        last_press_send = now;
+        // Il contatore cresce solo quando premiamo il pulsante di INVIO reale
+        key_counter++;
         if (secure_mode == 0)
         {
-            /* ── FASE 1: pacchetto in chiaro ─────────────────────────────
-             * Stesso comportamento originale: stringa ASCII leggibile.
-             * Il contatore e' visibile nell'aria — vulnerabile al Replay.
-             */
+            /* ── FASE 1: pacchetto in chiaro ───────────────────────────── */
             snprintf(tx_buffer, sizeof(tx_buffer), "OPEN:1234:CNT:%04lu\n", key_counter);
         }
         else
         {
-            /* ── FASE 2: pacchetto cifrato con AES-128-ECB ───────────────
-             *
-             * STEP 1 — costruisce il plaintext (16 byte):
-             *   Byte  0..3  → key_counter  (little-endian)
-             *   Byte  4..7  → CMD_OPEN_WORD (sanity-check per il Nodo 2)
-             *   Byte  8..15 → PADDING_BYTE  (0xAA, completa il blocco)
-             */
+            /* ── FASE 2: pacchetto cifrato con AES-128-ECB ─────────────── */
+
             memset(plaintext, 0, AES_BLOCK_SIZE);
 
             plaintext[0] = (uint8_t)( key_counter        & 0xFF);
+
             plaintext[1] = (uint8_t)((key_counter >>  8) & 0xFF);
+
             plaintext[2] = (uint8_t)((key_counter >> 16) & 0xFF);
+
             plaintext[3] = (uint8_t)((key_counter >> 24) & 0xFF);
 
             plaintext[4] = (uint8_t)((CMD_OPEN_WORD >> 24) & 0xFF);
+
             plaintext[5] = (uint8_t)((CMD_OPEN_WORD >> 16) & 0xFF);
+
             plaintext[6] = (uint8_t)((CMD_OPEN_WORD >>  8) & 0xFF);
+
             plaintext[7] = (uint8_t)( CMD_OPEN_WORD        & 0xFF);
 
             memset(&plaintext[8], PADDING_BYTE, 8);
 
-            /* STEP 2 — cifratura AES-128-ECB:
-             * I 16 byte del plaintext vengono trasformati in 16 byte
-             * di ciphertext apparentemente casuali.
-             * Output: sempre e solo 16 byte, non di piu'.
-             */
-            // Sostituisci la vecchia chiamata a cmox_aes_ecb_enc con questa:
+            // Cifratura CryptoLib v4 con API Unificata
             size_t output_len = 0;
-            cmox_cipher_retval_t retval = cmox_cipher_encrypt(
-                CMOX_AESFAST_ECB_ENC_ALGO,       // Algoritmo (preso in automatico da cmox_default_defs.h)
-                plaintext,              // Buffer con i dati in chiaro (16 byte)
-                AES_BLOCK_SIZE,         // Dimensione dei dati in chiaro (16)
-                shared_key,             // La tua chiave da 16 byte
-                16,                     // Dimensione della chiave in byte (16 = AES-128)
-                NULL,                   // IV (Impostato a NULL, non serve in modalità ECB)
-                0,                      // Lunghezza IV (0 per ECB)
-                ciphertext,             // Buffer dove salvare il risultato cifrato (16 byte)
-            &output_len             // Variabile in cui la libreria scrive i byte cifrati prodotti
-            );
 
+            cmox_cipher_retval_t retval = cmox_cipher_encrypt(CMOX_AESFAST_ECB_ENC_ALGO,plaintext,AES_BLOCK_SIZE,shared_key,16,NULL,0,ciphertext,&output_len);
             if (retval != CMOX_CIPHER_SUCCESS)
             {
-                return; // Non trasmettere se la cifratura fallisce
+                return; // Se la cifratura fallisce interrompe l'invio
             }
+            /* Hex encoding: 16 byte binari → 32 char ASCII */
 
-            /* STEP 3 — hex encoding: 16 byte binari → 32 char ASCII
-             * Ogni byte cifrato (es. 0xA3) diventa due caratteri ("A3").
-             * Il PACKET_SIZE rimane 32, compatibile con Fase 1 e Nodo 3.
-             */
             for (int i = 0; i < AES_BLOCK_SIZE; i++)
             {
                 snprintf(&tx_buffer[i * 2], 3, "%02X", ciphertext[i]);
             }
         }
-
+        // Trasmissione via DMA della stringa di 32 byte
         HAL_UART_Transmit_DMA(&huart1, (uint8_t*)tx_buffer, PACKET_SIZE);
 
-        // Feedback visivo rapido sulla chiave
+        // Feedback visivo rapido di trasmissione (LED Rosso PE9)
         HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_SET);
     }
 }
-
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+
 {
-	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_RESET);
+    // Spegne il LED di trasmissione al completamento del DMA
+    HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_RESET);
 }
 
 /* USER CODE END 4 */
