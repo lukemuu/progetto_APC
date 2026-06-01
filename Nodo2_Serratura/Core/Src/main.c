@@ -69,8 +69,8 @@ DMA_HandleTypeDef hdma_usart1_rx;
 
 /* USER CODE BEGIN PV */
 
-uint8_t rx_buffer[PACKET_SIZE]; // Per la Serratura
-uint8_t secure_mode = 0;       // 0 = Scenario 1 (Inseguro), 1 = Scenario 2 (Sicuro)
+uint8_t rx_buffer[PACKET_SIZE + 1]; // Per la Serratura
+uint8_t secure_mode = 0;       // 0 = Scenario 1 (Insicuro), 1 = Scenario 2 (Sicuro)
 uint32_t last_valid_counter = 0; // Memoria dell'ultimo contatore accettato
 
 volatile uint8_t access_event = 0; // 0=nessuno, 1=corretto, 2=errato
@@ -600,7 +600,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 
 rearm_dma:
         // Pulisci e riarma il DMA immediatamente
-        memset(rx_buffer, 0, PACKET_SIZE);
+        memset(rx_buffer, 0, sizeof(rx_buffer));
         HAL_UART_Receive_DMA(huart, rx_buffer, PACKET_SIZE);
     }
 }

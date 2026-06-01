@@ -75,7 +75,7 @@ DMA_HandleTypeDef hdma_usart1_tx;
 
 /* USER CODE BEGIN PV */
 
-char tx_buffer[PACKET_SIZE]; // Per la Chiave
+char tx_buffer[PACKET_SIZE + 1]; // Per la Chiave
 uint32_t key_counter = 0; // Il nostro contatore di sicurezza
 
 /*
@@ -84,7 +84,7 @@ uint32_t key_counter = 0; // Il nostro contatore di sicurezza
  *   1 = Scenario 2 (Fase 2, pacchetto cifrato con AES-128-ECB)
  * Deve essere tenuto sincronizzato manualmente con il Nodo 2.
  */
-uint8_t secure_mode = 0;
+uint8_t secure_mode = 1;
 
 /* Buffer di lavoro per la cifratura AES (Fase 2) */
 static uint8_t plaintext[AES_BLOCK_SIZE];
