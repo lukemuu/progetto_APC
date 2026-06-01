@@ -33,7 +33,33 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define PACKET_SIZE 32
+#define PACKET_SIZE     32
+#define AES_BLOCK_SIZE  16
+#define CMOX_AES_IMPL CMOX_AES_SMALL
+
+/*
+ * Chiave AES-128 condivisa (16 byte).
+ * DEVE essere IDENTICA nel Nodo 2.
+ * In un sistema reale verrebbe protetta in Flash OTP o TrustZone;
+ * qui e' hardcoded a scopo dimostrativo.
+ */
+static const uint8_t shared_key[16] = {
+    0x2B, 0x7E, 0x15, 0x16,
+    0x28, 0xAE, 0xD2, 0xA6,
+    0xAB, 0xF7, 0x15, 0x88,
+    0x09, 0xCF, 0x4F, 0x3C
+};
+
+/*
+ * Costante "OPEN" codificata come 4 byte.
+ * Inserita nel plaintext come sanity-check post-decifratura sul Nodo 2.
+ * 'O'=0x4F 'P'=0x50 'E'=0x45 'N'=0x4E
+ */
+#define CMD_OPEN_WORD  0x4F50454Eul
+
+/* Padding fisso per completare il blocco da 16 byte (byte 8..15) */
+#define PADDING_BYTE   0xAA
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -51,6 +77,18 @@ DMA_HandleTypeDef hdma_usart1_tx;
 
 char tx_buffer[PACKET_SIZE]; // Per la Chiave
 uint32_t key_counter = 0; // Il nostro contatore di sicurezza
+
+/*
+ * Flag di modalita' operativa, commutabile a runtime dal pulsante:
+ *   0 = Scenario 1 (Fase 1, pacchetto in chiaro)
+ *   1 = Scenario 2 (Fase 2, pacchetto cifrato con AES-128-ECB)
+ * Deve essere tenuto sincronizzato manualmente con il Nodo 2.
+ */
+uint8_t secure_mode = 0;
+
+/* Buffer di lavoro per la cifratura AES (Fase 2) */
+static uint8_t plaintext[AES_BLOCK_SIZE];
+static uint8_t ciphertext[AES_BLOCK_SIZE];
 
 /* USER CODE END PV */
 
@@ -102,6 +140,14 @@ int main(void)
   MX_USART1_UART_Init();
   MX_CRC_Init();
   /* USER CODE BEGIN 2 */
+
+  /*
+   * Inizializzazione della libreria X-CUBE-CRYPTOLIB.
+   * Deve essere chiamata una sola volta prima di qualsiasi
+   * operazione crittografica. Necessaria anche in Fase 1
+   * (nessun overhead: se secure_mode==0 non viene mai usata).
+   */
+  cmox_initialize(NULL);
 
   /* USER CODE END 2 */
 
@@ -290,10 +336,78 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
     if (GPIO_Pin == GPIO_PIN_0) // Pulsante della Chiave
     {
+        uint32_t now = HAL_GetTick();
+        static uint32_t last_press = 0;
+
+        if ((now - last_press) < 200) return;
+        last_press = now;
+
         key_counter++; // Incrementa ad ogni pressione
 
-        // Prepariamo il pacchetto includendo il contatore (formattato a 4 cifre per comodità)
-        snprintf(tx_buffer, sizeof(tx_buffer), "OPEN:1234:CNT:%04lu\n", key_counter);
+        if (secure_mode == 0)
+        {
+            /* ── FASE 1: pacchetto in chiaro ─────────────────────────────
+             * Stesso comportamento originale: stringa ASCII leggibile.
+             * Il contatore e' visibile nell'aria — vulnerabile al Replay.
+             */
+            snprintf(tx_buffer, sizeof(tx_buffer), "OPEN:1234:CNT:%04lu\n", key_counter);
+        }
+        else
+        {
+            /* ── FASE 2: pacchetto cifrato con AES-128-ECB ───────────────
+             *
+             * STEP 1 — costruisce il plaintext (16 byte):
+             *   Byte  0..3  → key_counter  (little-endian)
+             *   Byte  4..7  → CMD_OPEN_WORD (sanity-check per il Nodo 2)
+             *   Byte  8..15 → PADDING_BYTE  (0xAA, completa il blocco)
+             */
+            memset(plaintext, 0, AES_BLOCK_SIZE);
+
+            plaintext[0] = (uint8_t)( key_counter        & 0xFF);
+            plaintext[1] = (uint8_t)((key_counter >>  8) & 0xFF);
+            plaintext[2] = (uint8_t)((key_counter >> 16) & 0xFF);
+            plaintext[3] = (uint8_t)((key_counter >> 24) & 0xFF);
+
+            plaintext[4] = (uint8_t)((CMD_OPEN_WORD >> 24) & 0xFF);
+            plaintext[5] = (uint8_t)((CMD_OPEN_WORD >> 16) & 0xFF);
+            plaintext[6] = (uint8_t)((CMD_OPEN_WORD >>  8) & 0xFF);
+            plaintext[7] = (uint8_t)( CMD_OPEN_WORD        & 0xFF);
+
+            memset(&plaintext[8], PADDING_BYTE, 8);
+
+            /* STEP 2 — cifratura AES-128-ECB:
+             * I 16 byte del plaintext vengono trasformati in 16 byte
+             * di ciphertext apparentemente casuali.
+             * Output: sempre e solo 16 byte, non di piu'.
+             */
+            // Sostituisci la vecchia chiamata a cmox_aes_ecb_enc con questa:
+            size_t output_len = 0;
+            cmox_cipher_retval_t retval = cmox_cipher_encrypt(
+                CMOX_AESFAST_ECB_ENC_ALGO,       // Algoritmo (preso in automatico da cmox_default_defs.h)
+                plaintext,              // Buffer con i dati in chiaro (16 byte)
+                AES_BLOCK_SIZE,         // Dimensione dei dati in chiaro (16)
+                shared_key,             // La tua chiave da 16 byte
+                16,                     // Dimensione della chiave in byte (16 = AES-128)
+                NULL,                   // IV (Impostato a NULL, non serve in modalità ECB)
+                0,                      // Lunghezza IV (0 per ECB)
+                ciphertext,             // Buffer dove salvare il risultato cifrato (16 byte)
+            &output_len             // Variabile in cui la libreria scrive i byte cifrati prodotti
+            );
+
+            if (retval != CMOX_CIPHER_SUCCESS)
+            {
+                return; // Non trasmettere se la cifratura fallisce
+            }
+
+            /* STEP 3 — hex encoding: 16 byte binari → 32 char ASCII
+             * Ogni byte cifrato (es. 0xA3) diventa due caratteri ("A3").
+             * Il PACKET_SIZE rimane 32, compatibile con Fase 1 e Nodo 3.
+             */
+            for (int i = 0; i < AES_BLOCK_SIZE; i++)
+            {
+                snprintf(&tx_buffer[i * 2], 3, "%02X", ciphertext[i]);
+            }
+        }
 
         HAL_UART_Transmit_DMA(&huart1, (uint8_t*)tx_buffer, PACKET_SIZE);
 

@@ -28,7 +28,7 @@ cmox_init_retval_t cmox_ll_init(void *pArg)
 {
   (void)pArg;
   /* Ensure CRC is enabled for cryptographic processing */
-  __HAL_RCC_CRC_RELEASE_RESET();
+  //__HAL_RCC_CRC_RELEASE_RESET();
   __HAL_RCC_CRC_CLK_ENABLE();
   return CMOX_INIT_SUCCESS;
 }
