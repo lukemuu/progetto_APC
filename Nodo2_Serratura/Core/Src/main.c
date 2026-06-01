@@ -24,6 +24,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "cmox_crypto.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -33,7 +34,24 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define PACKET_SIZE 32
+#define PACKET_SIZE     32
+#define AES_BLOCK_SIZE  16
+#define CMOX_AES_IMPL CMOX_AES_SMALL
+
+/*
+ * Chiave AES-128 condivisa (16 byte).
+ * DEVE essere IDENTICA a quella nel Nodo 1.
+ */
+static const uint8_t shared_key[16] = {
+    0x2B, 0x7E, 0x15, 0x16,
+    0x28, 0xAE, 0xD2, 0xA6,
+    0xAB, 0xF7, 0x15, 0x88,
+    0x09, 0xCF, 0x4F, 0x3C
+};
+
+/* Stessa costante usata dal Nodo 1 per il sanity-check post-decifratura */
+#define CMD_OPEN_WORD  0x4F50454Eul
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -42,6 +60,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+CRC_HandleTypeDef hcrc;
+
 TIM_HandleTypeDef htim2;
 
 UART_HandleTypeDef huart1;
@@ -49,11 +69,16 @@ DMA_HandleTypeDef hdma_usart1_rx;
 
 /* USER CODE BEGIN PV */
 
-uint8_t rx_buffer[PACKET_SIZE]; // Per la Serratura
-uint8_t secure_mode = 0;       // 0 = Scenario 1 (Inseguro), 1 = Scenario 2 (Sicuro)
+uint8_t rx_buffer[PACKET_SIZE + 1]; // Per la Serratura
+uint8_t secure_mode = 0;       // 0 = Scenario 1 (Insicuro), 1 = Scenario 2 (Sicuro)
 uint32_t last_valid_counter = 0; // Memoria dell'ultimo contatore accettato
 
 volatile uint8_t access_event = 0; // 0=nessuno, 1=corretto, 2=errato
+
+/* Buffer di lavoro interni alla callback (Fase 2) */
+static uint8_t ciphertext_bin[AES_BLOCK_SIZE];
+static uint8_t decrypted[AES_BLOCK_SIZE];
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -62,12 +87,53 @@ static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_TIM2_Init(void);
+static void MX_CRC_Init(void);
 /* USER CODE BEGIN PFP */
-
+static uint8_t hex_char_to_nibble(char c);
+static int hex_to_bytes(const uint8_t *hex_str, uint8_t *out, uint16_t out_len);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+/**
+  * @brief  Converte un singolo carattere hex ASCII nel suo valore nibble.
+  *         Restituisce 0xFF se il carattere non e' hex valido.
+  *         Esempi: '0'->0x0, '9'->0x9, 'A'->0xA, 'f'->0xF
+  */
+static uint8_t hex_char_to_nibble(char c)
+{
+    if (c >= '0' && c <= '9') return (uint8_t)(c - '0');
+    if (c >= 'A' && c <= 'F') return (uint8_t)(c - 'A' + 10);
+    if (c >= 'a' && c <= 'f') return (uint8_t)(c - 'a' + 10);
+    return 0xFF;
+}
+
+/**
+  * @brief  Converte una stringa ASCII hex in un array di byte binari.
+  * @param  hex_str  Stringa di input (es. "A3F7C2B1..."), 2*out_len caratteri
+  * @param  out      Buffer di output
+  * @param  out_len  Numero di byte da produrre (= lunghezza stringa / 2)
+  * @retval 0 = successo, -1 = carattere non valido trovato
+  *
+  * Esempio: "A3F7" (4 char) -> {0xA3, 0xF7} (2 byte)
+  */
+static int hex_to_bytes(const uint8_t *hex_str, uint8_t *out, uint16_t out_len)
+{
+    for (uint16_t i = 0; i < out_len; i++)
+    {
+        uint8_t hi = hex_char_to_nibble((char)hex_str[i * 2]);
+        uint8_t lo = hex_char_to_nibble((char)hex_str[i * 2 + 1]);
+
+        if (hi == 0xFF || lo == 0xFF)
+        {
+            return -1;
+        }
+
+        out[i] = (uint8_t)((hi << 4) | lo);
+    }
+    return 0;
+}
 
 /* USER CODE END 0 */
 
@@ -103,7 +169,15 @@ int main(void)
   MX_DMA_Init();
   MX_USART1_UART_Init();
   MX_TIM2_Init();
+  MX_CRC_Init();
   /* USER CODE BEGIN 2 */
+
+  /*
+   * Inizializzazione della libreria X-CUBE-CRYPTOLIB.
+   * Deve essere chiamata una sola volta prima di qualsiasi
+   * operazione crittografica.
+   */
+  cmox_initialize(NULL);
 
   HAL_UART_Receive_DMA(&huart1, rx_buffer, PACKET_SIZE);
 
@@ -193,6 +267,37 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief CRC Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_CRC_Init(void)
+{
+
+  /* USER CODE BEGIN CRC_Init 0 */
+
+  /* USER CODE END CRC_Init 0 */
+
+  /* USER CODE BEGIN CRC_Init 1 */
+
+  /* USER CODE END CRC_Init 1 */
+  hcrc.Instance = CRC;
+  hcrc.Init.DefaultPolynomialUse = DEFAULT_POLYNOMIAL_ENABLE;
+  hcrc.Init.DefaultInitValueUse = DEFAULT_INIT_VALUE_ENABLE;
+  hcrc.Init.InputDataInversionMode = CRC_INPUTDATA_INVERSION_NONE;
+  hcrc.Init.OutputDataInversionMode = CRC_OUTPUTDATA_INVERSION_DISABLE;
+  hcrc.InputDataFormat = CRC_INPUTDATA_FORMAT_BYTES;
+  if (HAL_CRC_Init(&hcrc) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN CRC_Init 2 */
+
+  /* USER CODE END CRC_Init 2 */
+
 }
 
 /**
@@ -359,6 +464,14 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
         last_press = now;
 
         secure_mode = !secure_mode;
+
+        /*
+         * Al cambio di modalita' azzera il contatore di riferimento.
+         * Questo e' necessario perche' il Nodo 1 resetta key_counter
+         * al suo switch: i due nodi devono ripartire da zero insieme.
+         */
+        last_valid_counter = 0;
+
         HAL_GPIO_TogglePin(GPIOE, GPIO_PIN_8);
     }
 }
@@ -401,12 +514,93 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
         }
         else
         {
-            // Il pacchetto non contiene nemmeno la password base
-            access_event = 2;
+            /* ── FASE 2: pacchetto cifrato ───────────────────────────────
+             *
+             * Il pacchetto non contiene "OPEN:1234" in chiaro: e' un
+             * pacchetto cifrato con AES-128-ECB proveniente dalla Fase 2
+             * del Nodo 1. Viene elaborato solo se secure_mode == 1.
+             * Se secure_mode == 0 e arriva un pacchetto cifrato, e' errato.
+             */
+            if (secure_mode == 0)
+            {
+                access_event = 2;
+                goto rearm_dma;
+            }
+
+            /* STEP 1 — decodifica hex ASCII -> binario:
+             * rx_buffer contiene 32 caratteri ASCII (es. "A3F7C2B1...").
+             * hex_to_bytes() li converte nei 16 byte binari cifrati.
+             */
+            if (hex_to_bytes(rx_buffer, ciphertext_bin, AES_BLOCK_SIZE) != 0)
+            {
+                access_event = 2;
+                goto rearm_dma;
+            }
+
+            /* STEP 2 — decifratura AES-128-ECB:
+             * Stessa chiave del Nodo 1. Produce 16 byte di plaintext.
+             */
+            size_t output_len = 0;
+            cmox_cipher_retval_t retval = cmox_cipher_decrypt(
+                CMOX_AESFAST_ECB_DEC_ALGO, // Il nuovo identificativo dell'algoritmo di decifratura
+                ciphertext_bin,            // Buffer con i 16 byte cifrati ricevuti
+                AES_BLOCK_SIZE,            // Lunghezza dei dati cifrati (16 byte)
+                shared_key,                // La tua chiave AES (deve essere identica a quella del Nodo 1)
+                16,                        // Dimensione della chiave espressa in byte (16)
+                NULL,                      // IV (Impostato a NULL per ECB)
+                0,                         // Lunghezza dell'IV (0)
+                decrypted,                 // Buffer in cui salvare il testo in chiaro decifrato
+                &output_len                // Variabile che conterrà il numero di byte scritti
+            );
+
+            if (retval != CMOX_CIPHER_SUCCESS)
+            {
+                access_event = 2;
+                goto rearm_dma;
+            }
+
+            /* STEP 3 — sanity-check sul campo "command" (byte 4..7):
+             * Verifica che il plaintext decifrato contenga CMD_OPEN_WORD.
+             * Se la chiave fosse sbagliata o il pacchetto corrotto,
+             * questo confronto fallirebbe.
+             */
+            uint32_t received_cmd =
+                ((uint32_t)decrypted[4] << 24) |
+                ((uint32_t)decrypted[5] << 16) |
+                ((uint32_t)decrypted[6] <<  8) |
+                ((uint32_t)decrypted[7]);
+
+            if (received_cmd != CMD_OPEN_WORD)
+            {
+                access_event = 2;
+                goto rearm_dma;
+            }
+
+            /* STEP 4 — estrazione del counter (byte 0..3, little-endian) */
+            uint32_t received_counter =
+                ((uint32_t)decrypted[0])       |
+                ((uint32_t)decrypted[1] <<  8) |
+                ((uint32_t)decrypted[2] << 16) |
+                ((uint32_t)decrypted[3] << 24);
+
+            /* STEP 5 — Rolling Code check:
+             * Il contatore e' valido solo se strettamente maggiore
+             * dell'ultimo accettato. Uguale o minore = Replay Attack.
+             */
+            if (received_counter > last_valid_counter)
+            {
+                last_valid_counter = received_counter;
+                access_event = 1; // Accesso Consentito!
+            }
+            else
+            {
+                access_event = 2; // REPLAY ATTACK RILEVATO!
+            }
         }
 
+rearm_dma:
         // Pulisci e riarma il DMA immediatamente
-        memset(rx_buffer, 0, PACKET_SIZE);
+        memset(rx_buffer, 0, sizeof(rx_buffer));
         HAL_UART_Receive_DMA(huart, rx_buffer, PACKET_SIZE);
     }
 }
