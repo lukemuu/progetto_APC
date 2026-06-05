@@ -190,16 +190,30 @@ int main(void)
       /* USER CODE BEGIN WHILE */
 
       // --- CASO 1: APERTURA AUTORIZZATA ---
-      if (access_event == 1)
-      {
-          access_event = 0; // Resetta immediatamente il flag per non ciclare
+	  if (access_event == 1)
+	  {
+	      access_event = 0; // Resetta immediatamente il flag per non ciclare
 
-          // LED Verde ON per 1 secondo (Sblocco Solenoide/Relè)
-          HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_SET);
-          HAL_Delay(1000);
-          HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET);
-      }
+	      // Due squilli scattanti sul buzzer (feedback sonoro apertura)
+	      for (int i = 0; i < 2; i++)
+	      {
+	          HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
+	          HAL_Delay(80);  // squillo breve e deciso
+	          HAL_TIM_PWM_Stop(&htim2, TIM_CHANNEL_2);
+	          HAL_Delay(80);  // pausa tra i due squilli
+	      }
 
+	      // Attiva relè → solenoide si sblocca
+	      HAL_GPIO_WritePin(Green_Led_GPIO_Port, Green_Led_Pin, GPIO_PIN_SET);
+
+	      // LED Verde ON per 1 secondo (feedback visivo)
+	      HAL_GPIO_WritePin(GPIOE, Green_Led_Pin, GPIO_PIN_SET);
+	      HAL_Delay(1000);
+
+	      // Disattiva relè → solenoide si richiude
+	      HAL_GPIO_WritePin(Green_Led_GPIO_Port, Green_Led_Pin, GPIO_PIN_RESET);
+	      HAL_GPIO_WritePin(GPIOE, Green_Led_Pin, GPIO_PIN_RESET);
+	  }
       // --- CASO 2: ACCESSO NEGATO / ATTACCO IN CORSO ---
       else if (access_event == 2)
       {

@@ -317,7 +317,7 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin : send_button_Pin */
   GPIO_InitStruct.Pin = send_button_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(send_button_GPIO_Port, &GPIO_InitStruct);
 
@@ -387,61 +387,69 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     else if (GPIO_Pin == GPIO_PIN_1)
     {
         uint32_t now = HAL_GetTick();
-        static uint32_t last_press_send = 0;
-        // Anti-rimbalzo (Debounce) dedicato all'invio
-        if ((now - last_press_send) < 200) return;
-        last_press_send = now;
-        // Il contatore cresce solo quando premiamo il pulsante di INVIO reale
-        key_counter++;
-        if (secure_mode == 0)
+        static uint32_t  last_edge_time  = 0;
+        static uint8_t   button_pressed  = 0;   // <-- flag "già premuto"
+
+        /* Debounce rapido su qualsiasi fronte (50 ms bastano per il rumore) */
+        if ((now - last_edge_time) < 50) return;
+        last_edge_time = now;
+
+        /* Leggiamo lo stato reale del pin subito dopo il fronte */
+        GPIO_PinState state = HAL_GPIO_ReadPin(send_button_GPIO_Port, send_button_Pin);
+
+        if (state == GPIO_PIN_RESET)
         {
-            /* ── FASE 1: pacchetto in chiaro ───────────────────────────── */
-            snprintf(tx_buffer, sizeof(tx_buffer), "OPEN:1234:CNT:%04lu\n", key_counter);
+            /* ── FRONTE DI DISCESA: pulsante appena premuto ─── */
+            if (button_pressed) return;   // già tenuto: ignora assolutamente
+            button_pressed = 1;
+
+            key_counter++;
+
+            if (secure_mode == 0)
+            {
+                /* ── FASE 1: pacchetto in chiaro ─── */
+                snprintf(tx_buffer, sizeof(tx_buffer),
+                         "OPEN:1234:CNT:%04lu\n", key_counter);
+            }
+            else
+            {
+                /* ── FASE 2: pacchetto cifrato AES-128-ECB ─── */
+                memset(plaintext, 0, AES_BLOCK_SIZE);
+
+                plaintext[0] = (uint8_t)( key_counter        & 0xFF);
+                plaintext[1] = (uint8_t)((key_counter >>  8) & 0xFF);
+                plaintext[2] = (uint8_t)((key_counter >> 16) & 0xFF);
+                plaintext[3] = (uint8_t)((key_counter >> 24) & 0xFF);
+
+                plaintext[4] = (uint8_t)((CMD_OPEN_WORD >> 24) & 0xFF);
+                plaintext[5] = (uint8_t)((CMD_OPEN_WORD >> 16) & 0xFF);
+                plaintext[6] = (uint8_t)((CMD_OPEN_WORD >>  8) & 0xFF);
+                plaintext[7] = (uint8_t)( CMD_OPEN_WORD        & 0xFF);
+
+                memset(&plaintext[8], PADDING_BYTE, 8);
+
+                size_t output_len = 0;
+                cmox_cipher_retval_t retval = cmox_cipher_encrypt(
+                    CMOX_AESFAST_ECB_ENC_ALGO,
+                    plaintext, AES_BLOCK_SIZE,
+                    shared_key, 16,
+                    NULL, 0,
+                    ciphertext, &output_len);
+
+                if (retval != CMOX_CIPHER_SUCCESS) return;
+
+                for (int i = 0; i < AES_BLOCK_SIZE; i++)
+                    snprintf(&tx_buffer[i * 2], 3, "%02X", ciphertext[i]);
+            }
+
+            HAL_UART_Transmit_DMA(&huart1, (uint8_t*)tx_buffer, PACKET_SIZE);
+            HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_SET);  // LED TX ON
         }
         else
         {
-            /* ── FASE 2: pacchetto cifrato con AES-128-ECB ─────────────── */
-
-            memset(plaintext, 0, AES_BLOCK_SIZE);
-
-            plaintext[0] = (uint8_t)( key_counter        & 0xFF);
-
-            plaintext[1] = (uint8_t)((key_counter >>  8) & 0xFF);
-
-            plaintext[2] = (uint8_t)((key_counter >> 16) & 0xFF);
-
-            plaintext[3] = (uint8_t)((key_counter >> 24) & 0xFF);
-
-            plaintext[4] = (uint8_t)((CMD_OPEN_WORD >> 24) & 0xFF);
-
-            plaintext[5] = (uint8_t)((CMD_OPEN_WORD >> 16) & 0xFF);
-
-            plaintext[6] = (uint8_t)((CMD_OPEN_WORD >>  8) & 0xFF);
-
-            plaintext[7] = (uint8_t)( CMD_OPEN_WORD        & 0xFF);
-
-            memset(&plaintext[8], PADDING_BYTE, 8);
-
-            // Cifratura CryptoLib v4 con API Unificata
-            size_t output_len = 0;
-
-            cmox_cipher_retval_t retval = cmox_cipher_encrypt(CMOX_AESFAST_ECB_ENC_ALGO,plaintext,AES_BLOCK_SIZE,shared_key,16,NULL,0,ciphertext,&output_len);
-            if (retval != CMOX_CIPHER_SUCCESS)
-            {
-                return; // Se la cifratura fallisce interrompe l'invio
-            }
-            /* Hex encoding: 16 byte binari → 32 char ASCII */
-
-            for (int i = 0; i < AES_BLOCK_SIZE; i++)
-            {
-                snprintf(&tx_buffer[i * 2], 3, "%02X", ciphertext[i]);
-            }
+            /* ── FRONTE DI SALITA: pulsante rilasciato ─── */
+            button_pressed = 0;   // ora una nuova pressione sarà accettata
         }
-        // Trasmissione via DMA della stringa di 32 byte
-        HAL_UART_Transmit_DMA(&huart1, (uint8_t*)tx_buffer, PACKET_SIZE);
-
-        // Feedback visivo rapido di trasmissione (LED Rosso PE9)
-        HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_SET);
     }
 }
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
